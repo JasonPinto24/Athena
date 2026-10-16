@@ -1,0 +1,32 @@
+# Data
+yfinance
+pandas
+numpy
+duckdb
+requests
+pyyaml
+python-dotenv
+pydantic
+
+# ML
+torch
+transformers
+lightgbm
+scikit-learn
+
+# Agents + LLMs
+langgraph
+langchain-groq
+langchain-anthropic
+
+# Tracking + tracing
+mlflow
+langfuse
+
+# App + paper trading
+streamlit
+plotly
+alpaca-py
+
+# Notebooks
+ipykernel
