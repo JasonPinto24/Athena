@@ -1,20 +1,15 @@
 import operator
 from typing import Annotated, Any, TypedDict
 
-import yaml
 from langgraph.graph import END, START, StateGraph
 
 from athena.agents.debate import run_debate
 from athena.agents.evidence import build_evidence_pack
 from athena.agents.forecast import forecast_score
 from athena.agents.fundamentals import fundamentals_score
-from athena.agents.portfolio_manager import decide, write_report
+from athena.agents.portfolio_manager import debate_can_change, decide, write_report
 from athena.agents.risk import risk_check
 from athena.agents.sentiment import sentiment_score
-
-with open("config.yaml") as f:
-    CONFIG = yaml.safe_load(f)
-WEIGHTS = CONFIG["weights"]
 
 
 # ---------- The shared notebook ----------
@@ -62,7 +57,7 @@ def evidence_node(state):
         f"Fundamentals agent: score {f['F']:+.2f}, grades {f.get('grades', {})}",
         f"Sentiment agent: score {s['S']:+.2f} from {s.get('n', 0)} recent headlines",
         f"Forecast model: {m.get('p_top', 0.5):.1%} chance of being a top performer; "
-        f"ranks {m.get('rank_among_peers', 0.5):.0%} among peers",
+        f"ranks above {m.get('rank_among_peers', 0.5):.0%} of Nifty 50 peers",
         f"Risk agent: volatility {r.get('volatility', 0):.0%}, "
         f"max drawdown {r.get('max_drawdown', 0):.1%}, concerns: {r['reasons'] or 'none'}",
     ]
@@ -70,29 +65,12 @@ def evidence_node(state):
     return {"pack": pack, "steps": ["evidence"]}
 
 
-# ---------- Conditional edge: is the debate worth running? ----------
-def final_label(C, risk):
-    if C >= CONFIG["buy_threshold"]:
-        label = "Buy"
-    elif C <= CONFIG["sell_threshold"]:
-        label = "Sell"
-    else:
-        label = "Hold"
-    if label == "Buy" and risk["veto"]:
-        label = "Hold"
-    return label
-
-
+# ---------- Conditional edge: is it a photo finish? ----------
 def route_after_evidence(state):
     if state.get("force_debate"):
         return "debate"
-    partial = (WEIGHTS["fundamentals"] * state["fundamentals"]["F"]
-               + WEIGHTS["sentiment"] * state["sentiment"]["S"]
-               + WEIGHTS["forecast"] * state["forecast"]["M"])
-    swing = WEIGHTS["debate"]
-    if final_label(partial + swing, state["risk"]) != final_label(partial - swing, state["risk"]):
-        return "debate"
-    return "skip"
+    pct = state["forecast"]["rank_among_peers"]
+    return "debate" if debate_can_change(pct, state["risk"]) else "skip"
 
 
 # ---------- Nodes: debate, decide, report ----------
@@ -101,16 +79,18 @@ def debate_node(state):
 
 
 def decide_node(state):
-    D = state.get("debate", {}).get("D", 0.0)
-    result = decide(state["fundamentals"]["F"], state["sentiment"]["S"],
-                    state["forecast"]["M"], D, state["risk"])
+    f, s = state["fundamentals"], state["sentiment"]
+    F = f["F"] if f.get("grades") else None          # no financial data -> unknown
+    S = s["S"] if s.get("has_data") else None        # no headlines -> unknown
+    D = (state.get("debate") or {}).get("D")         # skipped -> None
+    result = decide(state["forecast"], state["risk"], F=F, S=S, D=D)
     return {"result": result, "steps": ["decide"]}
 
 
 def report_node(state):
     debate = state.get("debate") or {
         "winner": "skipped", "D": 0.0,
-        "reasoning": "Debate skipped because it could not change the decision.",
+        "reasoning": "Debate skipped because the stock is not near a decision cut-off.",
     }
     return {"report": write_report(state["pack"], state["result"], debate), "steps": ["report"]}
 

@@ -35,6 +35,20 @@ def _money(value, ticker):
     return f"${value / 1e9:,.2f} billion"
 
 
+def _relevant_news(ticker, as_of, max_news):
+    """Headlines that really mention the company, newest first. Never crashes on 'no news'."""
+    aliases = news_aliases(ticker)
+    news = get_news(aliases, as_of)
+    if news is None or len(news) == 0 or "title" not in news.columns:
+        return pd.DataFrame(columns=["date", "title"]), aliases
+
+    mask = news["title"].apply(lambda t: title_matches(t, aliases)).astype(bool)
+    news = news.loc[mask]                       # .loc + True/False -> filters rows, never columns
+    if "date" in news.columns:
+        news = news.sort_values("date", ascending=False)
+    return news.head(max_news), aliases
+
+
 def build_evidence_pack(ticker, company_name, as_of, agent_results=None,
                         index_ticker="^NSEI", anonymize=False, max_news=8):
     name = "Company A" if anonymize else company_name
@@ -80,17 +94,14 @@ def build_evidence_pack(ticker, company_name, as_of, agent_results=None,
             items.append(Evidence(id=f"F{i}", category="financials", text=text))
 
     # --- N: news headlines (using headline aliases) ---
-    aliases = news_aliases(ticker)
-    news = get_news(aliases, as_of)
-    news = news[news["title"].apply(lambda t: title_matches(t, aliases))]
-    news = news.sort_values("date", ascending=False).head(max_news)
+    news, aliases = _relevant_news(ticker, as_of, max_news)
     for i, (_, row) in enumerate(news.iterrows(), start=1):
         title = row["title"]
         if anonymize:
             for alias in aliases + [company_name]:
                 title = title.replace(alias, name)
-        items.append(Evidence(id=f"N{i}", category="news",
-                              text=f"{row['date'].date()}: {title}"))
+        day = pd.to_datetime(row["date"]).date()
+        items.append(Evidence(id=f"N{i}", category="news", text=f"{day}: {title}"))
 
     # --- A: other agents' results ---
     for i, text in enumerate(agent_results or [], start=1):
