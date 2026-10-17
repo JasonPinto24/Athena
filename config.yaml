@@ -1,0 +1,30 @@
+# Which LLM to use
+llm_provider: groq
+groq_model: openai/gpt-oss-120b
+
+# Benchmark index per market
+benchmarks:
+  india: "^NSEI"
+  us: "SPY"
+
+# Portfolio manager weights (must add up to 1)
+weights:
+  fundamentals: 0.30
+  sentiment: 0.20
+  forecast: 0.30
+  debate: 0.20
+
+# Decision thresholds
+buy_threshold: 0.25
+sell_threshold: -0.25
+
+# Risk agent limits
+risk:
+  max_volatility: 0.60
+  max_drawdown: -0.40
+  max_weight: 0.10
+  target_volatility: 0.25
+
+# Data rules
+fundamentals_lag_days: 45
+news_lookback_days: 30
