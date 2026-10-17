@@ -7,13 +7,13 @@ from athena.agents.sentiment import sentiment_score
 from athena.tools.company import company_name
 from athena.universe import UNIVERSE
 
-BUY_FRACTION = 0.25    # top 25% of the forecast ranking -> Buy
-SELL_FRACTION = 0.25   # bottom 25% -> Sell
-CLOSE_CALL = 0.05      # within 5 percentile points of a cut-off -> debate decides
+BUY_FRACTION = 0.25           # top 25% of the forecast ranking -> Buy
+SELL_FRACTION = 0.25          # bottom 25% -> Sell
+CLOSE_CALL = 0.05 + 1e-9      # within 5 percentile points of a cut-off (+ a hair for decimal noise)
 
 
 def label_from_rank(pct, buy_fraction=BUY_FRACTION, sell_fraction=SELL_FRACTION):
-    """pct = percentile rank among peers (1.0 = best, near 0 = worst)."""
+    """pct = share of peers this stock beats or ties (1.0 = best)."""
     if pct >= 1 - buy_fraction:
         return "Buy"
     if pct <= sell_fraction:
@@ -28,10 +28,10 @@ def is_close_call(pct, buy_fraction=BUY_FRACTION, sell_fraction=SELL_FRACTION):
 
 
 def scan(as_of, tickers=UNIVERSE, with_news=False):
-    # 1. One forecast for all stocks on this date
+    # 1. One forecast for all stocks on this date (same ranking as the single-stock view)
     fc = forecast_all(as_of)
     fc = fc[fc.index.isin(tickers)].copy()
-    fc["pct"] = fc["p"].rank(pct=True)
+    fc["pct"] = fc["p_rank"]
     fc["rank"] = fc["p"].rank(ascending=False, method="min").astype(int)
     fc = fc.sort_values("p", ascending=False)
 
