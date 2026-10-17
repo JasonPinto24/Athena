@@ -42,13 +42,18 @@ def decide(forecast, risk, F=None, S=None, D=None):
     near_buy, near_sell = near_lines(pct)
     close_call = near_buy or near_sell
     tie_break = None
-    if close_call and D:    # D is None if skipped; 0 means a draw -> keep the signal
-        if near_buy:
-            decision = "Buy" if D > 0 else "Hold"
+    if close_call and D is not None:
+        if D == 0:
+            tie_break = f"Debate tied, so the forecast's {signal} stands"
         else:
-            decision = "Sell" if D < 0 else "Hold"
-        verb = "confirmed" if decision == signal else f"moved {signal} ->"
-        tie_break = f"Debate {verb} {decision} (D = {D:+.2f})"
+            if near_buy:
+                decision = "Buy" if D > 0 else "Hold"
+            else:
+                decision = "Sell" if D < 0 else "Hold"
+            verb = "confirmed" if decision == signal else f"moved {signal} ->"
+            tie_break = f"Debate {verb} {decision} (D = {D:+.2f})"
+    elif close_call and near_buy and risk["veto"]:
+        tie_break = "Debate skipped: the risk veto makes it Hold either way"
 
     # 3. Confidence = half distance past the cut-off, half agreement of F, S, D
     if decision == "Buy":
@@ -83,6 +88,8 @@ def decide(forecast, risk, F=None, S=None, D=None):
         "close_call": close_call,
         "tie_break": tie_break,
         "confidence": round(confidence, 2),
+        "strength": round(strength, 2),
+        "agreement": round(agree, 2),
         "position_size": size,
         "vetoed": vetoed,
         "veto_reasons": risk["reasons"] if vetoed else [],
