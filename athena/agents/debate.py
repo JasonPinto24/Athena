@@ -107,11 +107,17 @@ def opening(side, pack):
     return ask(system, user, Argument).claims
 
 
-def rebuttal(side, pack, opponent_claims):
+def rebuttal(side, pack, opponent_claims, own_claims):
     stance = "SHOULD be bought now" if side == "bull" else "should NOT be bought now"
     system = f"You are the {side} analyst arguing that {pack.company} {stance}. {RULES}"
-    user = (f"{pack.to_text()}\n\nYour opponent argued:\n{as_list(opponent_claims)}\n\n"
-            "Make exactly 2 claims that rebut their strongest points.")
+    user = (
+        f"{pack.to_text()}\n\n"
+        f"Your earlier claims (do NOT repeat these):\n{as_list(own_claims)}\n\n"
+        f"Your opponent argued:\n{as_list(opponent_claims)}\n\n"
+        "Make exactly 2 NEW claims that directly answer their strongest points. "
+        "Each claim should name which opponent point it answers. "
+        "Do not repeat arguments already made."
+    )
     return ask(system, user, Argument).claims
 
 
@@ -119,6 +125,7 @@ def judge(pack, bull, bear):
     system = (
         "You are an impartial investment judge. A claim is convincing only if its cited "
         "evidence really supports it and it matters for the next month. "
+        "A claim that only repeats an earlier point does not count twice. "
         "Count the convincing claims on each side."
     )
     user = f"{pack.to_text()}\n\nBULL claims:\n{as_list(bull)}\n\nBEAR claims:\n{as_list(bear)}"
@@ -135,8 +142,8 @@ def run_debate(pack, max_rounds=3, close_call=0.2):
 
     bull_open, d1 = validate(opening("bull", pack), valid)
     bear_open, d2 = validate(opening("bear", pack), valid)
-    bull_reb, d3 = validate(rebuttal("bull", pack, bear_open), valid)
-    bear_reb, d4 = validate(rebuttal("bear", pack, bull_open), valid)
+    bull_reb, d3 = validate(rebuttal("bull", pack, bear_open, bull_open), valid)
+    bear_reb, d4 = validate(rebuttal("bear", pack, bull_open, bear_open), valid)
 
     bull = bull_open + bull_reb
     bear = bear_open + bear_reb
@@ -146,8 +153,8 @@ def run_debate(pack, max_rounds=3, close_call=0.2):
     verdict, v_bull, v_bear, D = judge(pack, bull, bear)
 
     if abs(D) < close_call and max_rounds >= 3:
-        bull3, d5 = validate(rebuttal("bull", pack, bear_reb), valid)
-        bear3, d6 = validate(rebuttal("bear", pack, bull_reb), valid)
+        bull3, d5 = validate(rebuttal("bull", pack, bear_reb, bull), valid)
+        bear3, d6 = validate(rebuttal("bear", pack, bull_reb, bear), valid)
         bull += bull3
         bear += bear3
         dropped += d5 + d6

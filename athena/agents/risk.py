@@ -25,7 +25,7 @@ def risk_check(ticker, as_of, decision="Buy", index_ticker="^NSEI"):
 
     if len(prices) < 252:
         return {"veto": decision == "Buy", "reasons": ["Less than 1 year of price history"],
-                "position_size": 0.0}
+                "position_size": 0.0, "volatility": None, "max_drawdown": None, "beta": None}
 
     # 1. Volatility: spread of the last 60 daily returns, converted to yearly
     returns = prices.pct_change().dropna()
@@ -41,12 +41,12 @@ def risk_check(ticker, as_of, decision="Buy", index_ticker="^NSEI"):
     both.columns = ["stock", "index"]
     beta = both["stock"].cov(both["index"]) / both["index"].var()
 
-    # Veto checks
+    # Veto checks (one decimal place so the numbers never look equal to the limit)
     reasons = []
     if volatility > RISK["max_volatility"]:
-        reasons.append(f"Volatility {volatility:.0%} is above the {RISK['max_volatility']:.0%} limit")
+        reasons.append(f"Volatility {volatility:.1%} is above the {RISK['max_volatility']:.1%} limit")
     if max_drawdown < RISK["max_drawdown"]:
-        reasons.append(f"Fell {max_drawdown:.0%} from its peak (limit {RISK['max_drawdown']:.0%})")
+        reasons.append(f"Fell {max_drawdown:.1%} from its peak (limit {RISK['max_drawdown']:.1%})")
 
     as_of_date = pd.Timestamp(as_of)
     if abs((pd.Timestamp.today().normalize() - as_of_date).days) <= 3:
