@@ -3,6 +3,7 @@ import os
 import pandas as pd
 from transformers import pipeline
 
+from athena.tools.company import news_aliases, title_matches
 from athena.tools.news import get_news
 
 LOCAL_MODEL = "models/finbert-athena"
@@ -29,12 +30,13 @@ def score_headlines(titles):
     return scores
 
 
-def sentiment_score(company_name, as_of, half_life_days=3, shrink=5):
-    news = get_news(company_name, as_of)
-    news = news[news["title"].str.contains(company_name, case=False, na=False)]
+def sentiment_score(company_name, as_of, ticker=None, half_life_days=3, shrink=5):
+    aliases = news_aliases(ticker) if ticker else [company_name]
+    news = get_news(aliases, as_of)
+    news = news[news["title"].apply(lambda t: title_matches(t, aliases))]
     n = len(news)
     if n == 0:
-        return {"S": 0.0, "n": 0, "note": "No news found"}
+        return {"S": 0.0, "n": 0, "has_data": False, "note": "No news found"}
 
     news = news.copy()
     news["score"] = score_headlines(news["title"])
@@ -51,6 +53,7 @@ def sentiment_score(company_name, as_of, half_life_days=3, shrink=5):
         "S": round(float(S), 3),
         "raw": round(float(raw), 3),
         "n": n,
+        "has_data": True,
         "most_negative": news.iloc[0]["title"],
         "most_positive": news.iloc[-1]["title"],
     }

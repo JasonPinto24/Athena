@@ -5,14 +5,8 @@ import pandas as pd
 from sklearn.metrics import roc_auc_score
 
 from athena.tools.features import build_features, FEATURES, MARKET_FEATURES
+from athena.universe import UNIVERSE
 
-TICKERS = [
-    "INFY.NS", "TCS.NS", "WIPRO.NS", "HCLTECH.NS",
-    "RELIANCE.NS", "HDFCBANK.NS", "ICICIBANK.NS", "KOTAKBANK.NS",
-    "SBIN.NS", "AXISBANK.NS", "ITC.NS", "HINDUNILVR.NS",
-    "NESTLEIND.NS", "SUNPHARMA.NS", "DRREDDY.NS", "CIPLA.NS",
-    "MARUTI.NS", "M&M.NS", "TATASTEEL.NS", "LT.NS",
-]
 AS_OF = "2026-10-16"
 DEV_END = "2026-01-01"   # 2026 is the hidden final exam
 FINAL_TEST = False       # set to True ONLY ONCE, at the very end
@@ -28,15 +22,22 @@ MODEL_FEATURES = RANK_FEATURES + MARKET_FEATURES
 
 
 def prepare_data():
-    frames = [build_features(t, AS_OF) for t in TICKERS]
+    frames = []
+    for t in UNIVERSE:
+        df = build_features(t, AS_OF)
+        if len(df) > 0:
+            frames.append(df)
+        else:
+            print("Skipping (no prices):", t)
     data = pd.concat(frames).reset_index()
     data = data.dropna(subset=FEATURES + MARKET_FEATURES)
+    print("Stocks used:", data["ticker"].nunique())
 
-    # Fix 1: rank each clue among the 20 stocks on the same day (0 = lowest, 1 = highest)
+    # Rank each clue among the stocks on the same day (0 = lowest, 1 = highest)
     for f in FEATURES:
         data[f + "_rank"] = data.groupby("date")[f].rank(pct=True)
 
-    # Fix 2: clear winners (top 30%) = 1, clear losers (bottom 30%) = 0, middle skipped
+    # Clear winners (top 30%) = 1, clear losers (bottom 30%) = 0, middle skipped
     data["result_rank"] = data.groupby("date")["future_excess"].rank(pct=True)
     data["target"] = np.nan
     data.loc[data["result_rank"] >= 0.7, "target"] = 1
@@ -45,7 +46,6 @@ def prepare_data():
 
 
 def daily_scores(test):
-    # Fix 3: score each day separately, then average
     ic = test.groupby("date")[["p", "future_excess"]].apply(
         lambda g: g["p"].corr(g["future_excess"], method="spearman")
     )

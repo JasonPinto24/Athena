@@ -1,4 +1,6 @@
+import re
 import time
+
 import duckdb
 import pandas as pd
 import requests
@@ -8,7 +10,7 @@ COLUMNS = ["date", "title", "source", "url"]
 DB_PATH = "data/athena.duckdb"
 
 
-def _read_cache(company_name, as_of):
+def _read_cache(key, as_of):
     con = duckdb.connect(DB_PATH)
     con.execute("""
         CREATE TABLE IF NOT EXISTS news_cache (
@@ -18,29 +20,41 @@ def _read_cache(company_name, as_of):
     """)
     cached = con.execute(
         "SELECT date, title, source, url FROM news_cache WHERE company = ? AND as_of = ?",
-        [company_name, str(as_of)],
+        [key, str(as_of)],
     ).df()
     con.close()
     return cached
 
 
-def _save_cache(company_name, as_of, news):
+def _save_cache(key, as_of, news):
     to_save = news.copy()
     to_save.insert(0, "as_of", str(as_of))
-    to_save.insert(0, "company", company_name)
+    to_save.insert(0, "company", key)
     con = duckdb.connect(DB_PATH)
     con.execute("INSERT INTO news_cache SELECT * FROM to_save")
     con.close()
 
 
-def _fetch_gdelt(company_name, as_of, days, max_records, retries):
+def _build_query(names):
+    terms = []
+    for name in names:
+        term = " ".join(re.sub(r"[^\w\s]", " ", name).split())
+        if len(term.replace(" ", "")) >= 3:
+            terms.append(f'"{term}"')
+    if not terms:
+        terms = [f'"{names[0]}"']
+    joined = terms[0] if len(terms) == 1 else "(" + " OR ".join(terms) + ")"
+    return f"{joined} sourcelang:english"
+
+
+def _fetch_gdelt(names, as_of, days, max_records, retries):
     end = pd.Timestamp(as_of) + pd.Timedelta(days=1)
     now = pd.Timestamp.utcnow().tz_localize(None)
     end = min(end, now)
     start = end - pd.Timedelta(days=days)
 
     params = {
-        "query": f'"{company_name}" sourcelang:english',
+        "query": _build_query(names),
         "mode": "artlist",
         "format": "json",
         "maxrecords": max_records,
@@ -65,12 +79,16 @@ def _fetch_gdelt(company_name, as_of, days, max_records, retries):
     return []
 
 
-def get_news(company_name, as_of, days=30, max_records=100, retries=5):
-    cached = _read_cache(company_name, as_of)
+def get_news(names, as_of, days=30, max_records=100, retries=5):
+    if isinstance(names, str):
+        names = [names]
+    key = "|".join(names)
+
+    cached = _read_cache(key, as_of)
     if len(cached) > 0:
         return cached
 
-    articles = _fetch_gdelt(company_name, as_of, days, max_records, retries)
+    articles = _fetch_gdelt(names, as_of, days, max_records, retries)
 
     rows = []
     for article in articles:
@@ -82,8 +100,9 @@ def get_news(company_name, as_of, days=30, max_records=100, retries=5):
         })
 
     news = pd.DataFrame(rows, columns=COLUMNS)
+    news["title"] = news["title"].str.split(" | ", regex=False).str[0].str.strip()
     news = news.drop_duplicates(subset="title")
 
     if len(news) > 0:
-        _save_cache(company_name, as_of, news)
+        _save_cache(key, as_of, news)
     return news

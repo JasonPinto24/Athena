@@ -1,6 +1,7 @@
 import pandas as pd
 from pydantic import BaseModel
 
+from athena.tools.company import news_aliases, title_matches
 from athena.tools.financials import get_financials
 from athena.tools.news import get_news
 from athena.tools.prices import get_prices
@@ -78,12 +79,16 @@ def build_evidence_pack(ticker, company_name, as_of, agent_results=None,
         for i, text in enumerate(fin_facts, start=1):
             items.append(Evidence(id=f"F{i}", category="financials", text=text))
 
-    # --- N: news headlines ---
-    news = get_news(company_name, as_of)
-    news = news[news["title"].str.contains(company_name, case=False, na=False)]
+    # --- N: news headlines (using headline aliases) ---
+    aliases = news_aliases(ticker)
+    news = get_news(aliases, as_of)
+    news = news[news["title"].apply(lambda t: title_matches(t, aliases))]
     news = news.sort_values("date", ascending=False).head(max_news)
     for i, (_, row) in enumerate(news.iterrows(), start=1):
-        title = row["title"].replace(company_name, name) if anonymize else row["title"]
+        title = row["title"]
+        if anonymize:
+            for alias in aliases + [company_name]:
+                title = title.replace(alias, name)
         items.append(Evidence(id=f"N{i}", category="news",
                               text=f"{row['date'].date()}: {title}"))
 

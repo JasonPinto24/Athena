@@ -6,3 +6,4 @@ mlruns/
 models/
 *.zip
 *.safetensors
+data/cache/

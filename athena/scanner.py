@@ -1,45 +1,59 @@
-import time
-
 import pandas as pd
 import yaml
 
-from athena.agents.forecast import UNIVERSE, forecast_score
+from athena.agents.forecast import forecast_all
 from athena.agents.fundamentals import fundamentals_score
 from athena.agents.risk import risk_check
 from athena.agents.sentiment import sentiment_score
 from athena.tools.company import company_name
+from athena.universe import UNIVERSE
 
 with open("config.yaml") as f:
     CONFIG = yaml.safe_load(f)
 W = CONFIG["weights"]
 
 
-def scan(as_of, tickers=UNIVERSE, top_n=4):
+def scan(as_of, tickers=UNIVERSE, top_fraction=0.2):
+    print("Forecasting all stocks at once...")
+    forecasts = forecast_all(as_of)
+
     rows = []
     for t in tickers:
+        if t not in forecasts.index:
+            print(f"{t:16s} skipped (no price data)")
+            continue
         name = company_name(t)
-        f = fundamentals_score(t, as_of)["F"]
-        s = sentiment_score(name, as_of)["S"]
-        m = forecast_score(t, as_of)["M"]
+        fund = fundamentals_score(t, as_of)
+        sent = sentiment_score(name, as_of, ticker=t)
+        m = float(forecasts.loc[t, "M"])
         r = risk_check(t, as_of, decision="Buy")
-        rows.append({"ticker": t, "company": name, "F": f, "S": s, "M": m,
-                     "veto": r["veto"], "size": r["position_size"]})
-        print(f"{t:14s} F={f:+.2f}  S={s:+.2f}  M={m:+.2f}  veto={r['veto']}")
-        time.sleep(5)  # be polite to GDELT's 1-request-per-5-seconds limit
+
+        rows.append({
+            "ticker": t, "company": name,
+            "F": fund["F"] if fund.get("grades") else None,
+            "S": sent["S"] if sent.get("has_data") else None,
+            "M": m,
+            "news_n": sent.get("n", 0),
+            "veto": r["veto"], "size": r["position_size"],
+        })
+        print(f"{t:16s} F={rows[-1]['F']}  S={rows[-1]['S']}  M={m:+.2f}  news={sent.get('n', 0)}")
 
     df = pd.DataFrame(rows)
 
-    # Put every agent on the same scale: z-score across today's stocks
+    # Missing data = neutral: z-score using only stocks that HAVE data
     for col in ["F", "S", "M"]:
-        std = df[col].std()
-        df[col + "_z"] = (df[col] - df[col].mean()) / std if std > 0 else 0.0
+        known = df[col].dropna()
+        std = known.std()
+        if len(known) > 1 and std > 0:
+            df[col + "_z"] = ((df[col] - known.mean()) / std).fillna(0.0)
+        else:
+            df[col + "_z"] = 0.0
 
-    # Combine with the config weights, re-scaled because the debate isn't used here
     total = W["fundamentals"] + W["sentiment"] + W["forecast"]
     df["score"] = (W["fundamentals"] * df["F_z"] + W["sentiment"] * df["S_z"]
                    + W["forecast"] * df["M_z"]) / total
 
-    # Rank: top N = Buy, bottom N = Sell (avoid), the rest Hold
+    top_n = max(1, int(len(df) * top_fraction))
     df = df.sort_values("score", ascending=False).reset_index(drop=True)
     df["rank"] = df.index + 1
     df["decision"] = "Hold"

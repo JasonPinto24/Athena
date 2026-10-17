@@ -41,7 +41,7 @@ def fundamentals_node(state):
 
 
 def sentiment_node(state):
-    return {"sentiment": sentiment_score(state["company"], state["as_of"]),
+    return {"sentiment": sentiment_score(state["company"], state["as_of"], ticker=state["ticker"]),
             "steps": ["sentiment"]}
 
 

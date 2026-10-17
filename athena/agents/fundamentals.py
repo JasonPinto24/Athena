@@ -6,13 +6,16 @@ def clip(x, low=-1.0, high=1.0):
     return max(low, min(high, x))
 
 
-def fundamentals_score(ticker, as_of, sector_pe=25.0, sector_margin=0.15, is_bank=False):
+def fundamentals_score(ticker, as_of, sector_pe=25.0, sector_margin=0.15):
     fin = get_financials(ticker, as_of)
     if fin is None:
         return {"F": 0.0, "grades": {}, "note": "No financial data"}
 
     prices = get_prices(ticker, as_of)
+    if len(prices) == 0:
+        return {"F": 0.0, "grades": {}, "note": "No price data"}
     price = float(prices["close"].iloc[-1])
+    is_financial = fin.get("is_financial", False)
 
     grades = {}
 
@@ -25,8 +28,8 @@ def fundamentals_score(ticker, as_of, sector_pe=25.0, sector_margin=0.15, is_ban
             pe = price / eps
             grades["cheap"] = clip((sector_pe - pe) / sector_pe)
 
-    # 2. Safe? (Debt / Equity)
-    if not is_bank and "total_debt" in fin and fin.get("equity", 0) > 0:
+    # 2. Safe? (Debt / Equity) - skipped for banks, insurers and lenders
+    if not is_financial and "total_debt" in fin and fin.get("equity", 0) > 0:
         de = fin["total_debt"] / fin["equity"]
         grades["safe"] = clip(1 - de)
 
@@ -44,13 +47,12 @@ def fundamentals_score(ticker, as_of, sector_pe=25.0, sector_margin=0.15, is_ban
         margin = fin["profit_ttm"] / fin["revenue_ttm"]
         grades["profitable"] = clip((margin - sector_margin) / 0.10)
 
-    if grades:
-        F = sum(grades.values()) / len(grades)
-    else:
-        F = 0.0
+    F = sum(grades.values()) / len(grades) if grades else 0.0
 
     return {
         "F": round(F, 3),
         "grades": {name: round(g, 3) for name, g in grades.items()},
         "price": price,
+        "data_source": fin.get("source"),
+        "is_financial": is_financial,
     }
