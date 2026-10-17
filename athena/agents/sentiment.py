@@ -1,15 +1,21 @@
+import os
+
 import pandas as pd
 from transformers import pipeline
 
 from athena.tools.news import get_news
 
+LOCAL_MODEL = "models/finbert-athena"
+FALLBACK_MODEL = "ProsusAI/finbert"
 _finbert = None
 
 
 def load_finbert():
     global _finbert
     if _finbert is None:
-        _finbert = pipeline("text-classification", model="ProsusAI/finbert", top_k=None)
+        model_name = LOCAL_MODEL if os.path.exists(LOCAL_MODEL) else FALLBACK_MODEL
+        print("Sentiment model:", model_name)
+        _finbert = pipeline("text-classification", model=model_name, top_k=None)
     return _finbert
 
 
