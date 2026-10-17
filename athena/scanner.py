@@ -1,5 +1,4 @@
 import pandas as pd
-import yaml
 
 from athena.agents.forecast import forecast_all
 from athena.agents.fundamentals import fundamentals_score
@@ -8,57 +7,74 @@ from athena.agents.sentiment import sentiment_score
 from athena.tools.company import company_name
 from athena.universe import UNIVERSE
 
-with open("config.yaml") as f:
-    CONFIG = yaml.safe_load(f)
-W = CONFIG["weights"]
+BUY_FRACTION = 0.25    # top 25% of the forecast ranking -> Buy
+SELL_FRACTION = 0.25   # bottom 25% -> Sell
+CLOSE_CALL = 0.05      # within 5 percentile points of a cut-off -> debate decides
 
 
-def scan(as_of, tickers=UNIVERSE, top_fraction=0.2):
-    print("Forecasting all stocks at once...")
-    forecasts = forecast_all(as_of)
+def label_from_rank(pct, buy_fraction=BUY_FRACTION, sell_fraction=SELL_FRACTION):
+    """pct = percentile rank among peers (1.0 = best, near 0 = worst)."""
+    if pct >= 1 - buy_fraction:
+        return "Buy"
+    if pct <= sell_fraction:
+        return "Sell"
+    return "Hold"
 
+
+def is_close_call(pct, buy_fraction=BUY_FRACTION, sell_fraction=SELL_FRACTION):
+    near_buy = abs(pct - (1 - buy_fraction)) <= CLOSE_CALL
+    near_sell = abs(pct - sell_fraction) <= CLOSE_CALL
+    return near_buy or near_sell
+
+
+def scan(as_of, tickers=UNIVERSE, with_news=False):
+    # 1. One forecast for all stocks on this date
+    fc = forecast_all(as_of)
+    fc = fc[fc.index.isin(tickers)].copy()
+    fc["pct"] = fc["p"].rank(pct=True)
+    fc["rank"] = fc["p"].rank(ascending=False, method="min").astype(int)
+    fc = fc.sort_values("p", ascending=False)
+
+    n = len(fc)
     rows = []
-    for t in tickers:
-        if t not in forecasts.index:
-            print(f"{t:16s} skipped (no price data)")
-            continue
-        name = company_name(t)
+    for i, (t, r) in enumerate(fc.iterrows(), start=1):
+        print(f"[{i}/{n}] {t}")
+
+        # 2. Signal from the ranking
+        signal = label_from_rank(r["pct"])
+
+        # 3. Risk brake (only blocks Buys)
+        risk = risk_check(t, as_of, decision="Buy")
+        decision = signal
+        if signal == "Buy" and risk["veto"]:
+            decision = "Hold (risk veto)"
+        reasons = risk.get("reasons") or risk.get("veto_reasons") or []
+
+        # 4. Context: fundamentals (fast) and news (slow, optional)
         fund = fundamentals_score(t, as_of)
-        sent = sentiment_score(name, as_of, ticker=t)
-        m = float(forecasts.loc[t, "M"])
-        r = risk_check(t, as_of, decision="Buy")
+        F = fund["F"] if fund.get("grades") else None
+
+        S, news_n = None, 0
+        if with_news:
+            sent = sentiment_score(company_name(t), as_of, ticker=t)
+            news_n = sent.get("n", 0)
+            if sent.get("has_data"):
+                S = sent["S"]
 
         rows.append({
-            "ticker": t, "company": name,
-            "F": fund["F"] if fund.get("grades") else None,
-            "S": sent["S"] if sent.get("has_data") else None,
-            "M": m,
-            "news_n": sent.get("n", 0),
-            "veto": r["veto"], "size": r["position_size"],
+            "ticker": t,
+            "rank": int(r["rank"]),
+            "p_top": round(float(r["p"]), 3),
+            "signal": signal,
+            "decision": decision,
+            "close_call": is_close_call(r["pct"]),
+            "F": None if F is None else round(F, 2),
+            "S": None if S is None else round(S, 2),
+            "news_n": news_n,
+            "vol": risk.get("volatility"),
+            "veto": risk["veto"],
+            "veto_reasons": "; ".join(reasons),
+            "position_size": risk.get("position_size", 0) if decision == "Buy" else 0,
         })
-        print(f"{t:16s} F={rows[-1]['F']}  S={rows[-1]['S']}  M={m:+.2f}  news={sent.get('n', 0)}")
 
-    df = pd.DataFrame(rows)
-
-    # Missing data = neutral: z-score using only stocks that HAVE data
-    for col in ["F", "S", "M"]:
-        known = df[col].dropna()
-        std = known.std()
-        if len(known) > 1 and std > 0:
-            df[col + "_z"] = ((df[col] - known.mean()) / std).fillna(0.0)
-        else:
-            df[col + "_z"] = 0.0
-
-    total = W["fundamentals"] + W["sentiment"] + W["forecast"]
-    df["score"] = (W["fundamentals"] * df["F_z"] + W["sentiment"] * df["S_z"]
-                   + W["forecast"] * df["M_z"]) / total
-
-    top_n = max(1, int(len(df) * top_fraction))
-    df = df.sort_values("score", ascending=False).reset_index(drop=True)
-    df["rank"] = df.index + 1
-    df["decision"] = "Hold"
-    df.loc[df["rank"] <= top_n, "decision"] = "Buy"
-    df.loc[df["rank"] > len(df) - top_n, "decision"] = "Sell"
-    df.loc[(df["decision"] == "Buy") & df["veto"], "decision"] = "Hold (risk veto)"
-    df.loc[df["decision"] != "Buy", "size"] = 0.0
-    return df
+    return pd.DataFrame(rows)
